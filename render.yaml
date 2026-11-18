@@ -2,6 +2,7 @@ services:
   - type: web
     name: usesub-api-service
     env: node
+    rootDir: .
     buildCommand: npm install
     startCommand: node server.js
     plan: free
