@@ -57,9 +57,10 @@ const db = new sqlite3.Database(dbFile, (err) => {
 // Fallback session tracking for single-user testing
 let activeUserPhone = null;
 
-// Helper to resolve user's phone from query, body, header, or fallback session
+// Helper to resolve logged-in user's phone from userPhone/phone, query, header, or fallback session
 function getRequestPhone(req) {
     return (
+        (req.body && req.body.userPhone) ||
         (req.query && req.query.phone) ||
         (req.body && req.body.phone) ||
         req.headers['x-user-phone'] ||
@@ -67,16 +68,24 @@ function getRequestPhone(req) {
     );
 }
 
+// Bigisub v2 Network IDs (1=MTN, 2=Glo, 3=Airtel, 4=9Mobile)
+const BIGISUB_NETWORK_IDS = {
+    MTN: 1,
+    Glo: 2,
+    Airtel: 3,
+    '9mobile': 4
+};
+
 // Custom profit margin per purchase (between ₦50 and ₦70)
 const PROFIT_MARGIN = 60;
 
-// Base plan prices + ₦60 profit markup
+// Replace bigisubPlanId with the exact numeric plan IDs from GET /api/v2/vtu/data/plans/
 const rawPlans = [
-    { id: "mtn-1gb", network: "MTN", name: "MTN 1GB SME (1 Month)", basePrice: 340, profit: PROFIT_MARGIN, bigisubCode: "mtn_1gb_sme" },
-    { id: "mtn-2gb", network: "MTN", name: "MTN 2GB SME (1 Month)", basePrice: 640, profit: PROFIT_MARGIN, bigisubCode: "mtn_2gb_sme" },
-    { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB Corporate (1 Month)", basePrice: 360, profit: PROFIT_MARGIN, bigisubCode: "airtel_1gb_corp" },
-    { id: "glo-1gb", network: "Glo", name: "Glo 1GB Data (1 Month)", basePrice: 320, profit: PROFIT_MARGIN, bigisubCode: "glo_1gb" },
-    { id: "9mobile-1gb", network: "9mobile", name: "9mobile 1GB Data (1 Month)", basePrice: 340, profit: PROFIT_MARGIN, bigisubCode: "9mobile_1gb" }
+    { id: "mtn-1gb", network: "MTN", name: "MTN 1GB SME (1 Month)", basePrice: 340, profit: PROFIT_MARGIN, bigisubPlanId: 101 },
+    { id: "mtn-2gb", network: "MTN", name: "MTN 2GB SME (1 Month)", basePrice: 640, profit: PROFIT_MARGIN, bigisubPlanId: 102 },
+    { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB Corporate (1 Month)", basePrice: 360, profit: PROFIT_MARGIN, bigisubPlanId: 201 },
+    { id: "glo-1gb", network: "Glo", name: "Glo 1GB Data (1 Month)", basePrice: 320, profit: PROFIT_MARGIN, bigisubPlanId: 301 },
+    { id: "9mobile-1gb", network: "9mobile", name: "9mobile 1GB Data (1 Month)", basePrice: 340, profit: PROFIT_MARGIN, bigisubPlanId: 401 }
 ];
 
 const localDataPlans = rawPlans.map(plan => ({
@@ -86,15 +95,16 @@ const localDataPlans = rawPlans.map(plan => ({
 
 // Helper Function: Validate Nigerian Network Prefixes
 function isValidNetworkPrefix(network, phone) {
+    const cleanPhone = String(phone || '').trim();
     const mtnPrefixes = ['0803', '0806', '0703', '0706', '0813', '0814', '0816', '0903', '0906', '0913', '0916'];
     const airtelPrefixes = ['0802', '0808', '0708', '0812', '0902', '0901', '0904', '0907', '0912'];
     const gloPrefixes = ['0805', '0807', '0705', '0811', '0707', '0905'];
     const mobile9Prefixes = ['0809', '0817', '0818', '0909'];
 
-    if (network === 'MTN') return mtnPrefixes.some(p => phone.startsWith(p));
-    if (network === 'Airtel') return airtelPrefixes.some(p => phone.startsWith(p));
-    if (network === 'Glo') return gloPrefixes.some(p => phone.startsWith(p));
-    if (network === '9mobile') return mobile9Prefixes.some(p => phone.startsWith(p));
+    if (network === 'MTN') return mtnPrefixes.some(p => cleanPhone.startsWith(p));
+    if (network === 'Airtel') return airtelPrefixes.some(p => cleanPhone.startsWith(p));
+    if (network === 'Glo') return gloPrefixes.some(p => cleanPhone.startsWith(p));
+    if (network === '9mobile') return mobile9Prefixes.some(p => cleanPhone.startsWith(p));
 
     return true;
 }
@@ -126,14 +136,16 @@ app.get('/api/user', (req, res) => {
 // Step 1: Register User (Saves to SQLite & generates OTP)
 app.post('/api/register', (req, res) => {
     const { name, phone, email, pin } = req.body;
+    const cleanPhone = String(phone || '').trim();
+    const cleanPin = String(pin || '').trim();
 
-    if (!phone || phone.length < 10 || !pin || pin.length < 4) {
+    if (!cleanPhone || cleanPhone.length < 10 || !cleanPin || cleanPin.length < 4) {
         return res.json({ success: false, message: "Please enter a valid phone number and 4-digit PIN." });
     }
 
     const verificationCode = Math.floor(1000 + Math.random() * 9000).toString();
 
-    db.get(`SELECT * FROM users WHERE phone = ?`, [phone], (err, row) => {
+    db.get(`SELECT * FROM users WHERE phone = ?`, [cleanPhone], (err, row) => {
         if (err) {
             return res.json({ success: false, message: "Database lookup error." });
         }
@@ -141,16 +153,16 @@ app.post('/api/register', (req, res) => {
         if (row) {
             db.run(
                 `UPDATE users SET name = ?, pin = ?, verificationCode = ? WHERE phone = ?`,
-                [name || "User", pin, verificationCode, phone],
+                [name || "User", cleanPin, verificationCode, cleanPhone],
                 (updateErr) => {
                     if (updateErr) {
                         return res.json({ success: false, message: "Database update error." });
                     }
-                    console.log(`[OTP RESENT] Verification code for ${phone} is: ${verificationCode}`);
+                    console.log(`[OTP RESENT] Verification code for ${cleanPhone} is: ${verificationCode}`);
                     return res.json({
                         success: true,
                         requiresVerification: true,
-                        phone,
+                        phone: cleanPhone,
                         message: `Verification code sent! (Check Render server logs for code: ${verificationCode})`
                     });
                 }
@@ -158,16 +170,16 @@ app.post('/api/register', (req, res) => {
         } else {
             db.run(
                 `INSERT INTO users (name, phone, email, pin, walletBalance, isVerified, verificationCode) VALUES (?, ?, ?, ?, 0, 0, ?)`,
-                [name || "User", phone, email || "", pin, verificationCode],
+                [name || "User", cleanPhone, email || "", cleanPin, verificationCode],
                 (insertErr) => {
                     if (insertErr) {
                         return res.json({ success: false, message: "Error creating user account." });
                     }
-                    console.log(`[OTP SENT] Verification code for ${phone} is: ${verificationCode}`);
+                    console.log(`[OTP SENT] Verification code for ${cleanPhone} is: ${verificationCode}`);
                     return res.json({
                         success: true,
                         requiresVerification: true,
-                        phone,
+                        phone: cleanPhone,
                         message: `Verification code sent! (Check Render server logs for code: ${verificationCode})`
                     });
                 }
@@ -178,22 +190,23 @@ app.post('/api/register', (req, res) => {
 
 // Step 2: Verify Phone Number with OTP Code
 app.post('/api/verify-otp', (req, res) => {
-    const { phone, code } = req.body;
+    const cleanPhone = String((req.body && req.body.phone) || '').trim();
+    const cleanCode = String((req.body && req.body.code) || '').trim();
 
-    db.get(`SELECT * FROM users WHERE phone = ?`, [phone], (err, user) => {
+    db.get(`SELECT * FROM users WHERE phone = ?`, [cleanPhone], (err, user) => {
         if (err || !user) {
             return res.json({ success: false, message: "User not found." });
         }
 
-        if (user.verificationCode !== code) {
+        if (String(user.verificationCode) !== cleanCode) {
             return res.json({ success: false, message: "Invalid verification code." });
         }
 
-        db.run(`UPDATE users SET isVerified = 1 WHERE phone = ?`, [phone], (updateErr) => {
+        db.run(`UPDATE users SET isVerified = 1 WHERE phone = ?`, [cleanPhone], (updateErr) => {
             if (updateErr) {
                 return res.json({ success: false, message: "Verification state error." });
             }
-            activeUserPhone = phone;
+            activeUserPhone = cleanPhone;
             res.json({
                 success: true,
                 message: "Account verified successfully!",
@@ -219,8 +232,7 @@ app.post('/api/fund-wallet', (req, res) => {
         return res.json({ success: false, message: "Please log in first." });
     }
 
-    const { amount } = req.body;
-    const addAmount = parseFloat(amount);
+    const addAmount = parseFloat(req.body && req.body.amount);
 
     if (!addAmount || addAmount <= 0) {
         return res.json({ success: false, message: "Enter a valid funding amount." });
@@ -231,7 +243,7 @@ app.post('/api/fund-wallet', (req, res) => {
             return res.json({ success: false, message: "User session not found." });
         }
 
-        const newBalance = row.walletBalance + addAmount;
+        const newBalance = Number((row.walletBalance + addAmount).toFixed(2));
 
         db.run(`UPDATE users SET walletBalance = ? WHERE phone = ?`, [newBalance, targetPhone], (updateErr) => {
             if (updateErr) {
@@ -249,9 +261,6 @@ app.post('/api/fund-wallet', (req, res) => {
 
 // Flutterwave Webhook Endpoint for Automated Card/Bank Funding
 app.post('/api/flw-webhook', (req, res) => {
-    const flutterwaveSignature = req.headers['verif-hash'];
-    // In production, verify flutterwaveSignature matches your secret hash
-
     const event = req.body;
     if (event && event.event === 'charge.completed' && event.data && event.data.status === 'successful') {
         const customerEmail = event.data.customer && event.data.customer.email;
@@ -260,7 +269,7 @@ app.post('/api/flw-webhook', (req, res) => {
         if (customerEmail && amountPaid > 0) {
             db.get(`SELECT * FROM users WHERE email = ? OR phone = ?`, [customerEmail, customerEmail], (err, user) => {
                 if (user) {
-                    const newBalance = user.walletBalance + amountPaid;
+                    const newBalance = Number((user.walletBalance + amountPaid).toFixed(2));
                     db.run(`UPDATE users SET walletBalance = ? WHERE id = ?`, [newBalance, user.id], () => {
                         console.log(`[FLUTTERWAVE FUNDING SUCCESS] Credited ₦${amountPaid} to user ${user.phone}`);
                     });
@@ -278,27 +287,32 @@ app.post('/api/buy-data', async (req, res) => {
         return res.json({ success: false, message: "Please log in first." });
     }
 
-    const { network, planId, phone, pin } = req.body;
-
+    const { network, planId, phone, pin } = req.body || {};
+    const recipientPhone = String(phone || '').trim();
+    const userPin = String(pin || '').trim();
+    const networkId = BIGISUB_NETWORK_IDS[network];
     const plan = localDataPlans.find(p => p.id === planId);
-    if (!plan) {
-        return res.json({ success: false, message: "Invalid data plan selected." });
+
+    if (!plan || !networkId) {
+        return res.json({ success: false, message: "Invalid network or data plan selected." });
     }
 
-    if (!phone || phone.length < 10) {
+    if (!recipientPhone || recipientPhone.length < 10) {
         return res.json({ success: false, message: "Please enter a valid recipient phone number." });
     }
 
-    if (!isValidNetworkPrefix(network, phone)) {
+    if (!isValidNetworkPrefix(network, recipientPhone)) {
         return res.json({ success: false, message: `Invalid phone number prefix for ${network}. Please check the number.` });
     }
+
+    const bigisubPin = String(process.env.BIGISUB_ACCOUNT_PIN || process.env.BIGISUB_PIN || userPin).trim();
 
     db.get(`SELECT * FROM users WHERE phone = ?`, [targetPhone], async (err, user) => {
         if (err || !user) {
             return res.json({ success: false, message: "User session not found." });
         }
 
-        if (pin !== user.pin) {
+        if (userPin !== String(user.pin)) {
             return res.json({ success: false, message: "Incorrect transaction PIN." });
         }
 
@@ -307,41 +321,50 @@ app.post('/api/buy-data', async (req, res) => {
         }
 
         try {
-            // Live call to Bigisub API (Base URL: https://api.bigisub.ng)
-            await axios.post(
-                'https://api.bigisub.ng/api/v2/data/',
+            // Live call to Bigisub v2 Data Purchase API
+            const bigisubRes = await axios.post(
+                'https://api.bigisub.ng/api/v2/vtu/data/purchase/',
                 {
-                    network: network.toLowerCase(),
-                    plan: plan.bigisubCode,
-                    phone: phone,
-                    pin: user.pin
+                    network: networkId,
+                    plan: Number(plan.bigisubPlanId),
+                    phone_number: recipientPhone,
+                    pin: bigisubPin,
+                    ported_number: true
                 },
                 {
-                    headers: { 'Authorization': `Token ${process.env.BIGISUB_TOKEN}` }
+                    headers: {
+                        'Authorization': `Token ${String(process.env.BIGISUB_TOKEN || '').trim()}`,
+                        'Content-Type': 'application/json'
+                    }
                 }
             );
 
             // Deduct balance and update SQLite database only after successful API call
-            const newBalance = user.walletBalance - plan.price;
+            const newBalance = Number((user.walletBalance - plan.price).toFixed(2));
 
             db.run(`UPDATE users SET walletBalance = ? WHERE phone = ?`, [newBalance, targetPhone], (updateErr) => {
                 if (updateErr) {
                     return res.json({ success: false, message: "Transaction processing failed." });
                 }
 
+                const ref = (bigisubRes.data && (bigisubRes.data.reference || bigisubRes.data.transaction_id)) || 'N/A';
                 console.log(
-                    `[BIGISUB API SUCCESS] Network: ${network}, Plan: ${plan.name}, Sold: ₦${plan.price}, Base: ₦${plan.basePrice}, Profit: ₦${plan.profit}, Recipient: ${phone}`
+                    `[BIGISUB API SUCCESS] Ref: ${ref} | Network: ${network} | Plan: ${plan.name} | Sold: ₦${plan.price} | Base: ₦${plan.basePrice} | Profit: ₦${plan.profit} | Recipient: ${recipientPhone}`
                 );
 
                 res.json({
                     success: true,
-                    message: `Successfully delivered ${plan.name} to ${phone}!`,
+                    message: `Successfully delivered ${plan.name} to ${recipientPhone}!`,
                     newBalance: newBalance
                 });
             });
         } catch (apiError) {
-            console.error("Bigisub API Error:", apiError.message);
-            res.json({ success: false, message: "Network gateway error. Please try again later." });
+            console.error("Bigisub API Error:", apiError.message, apiError.response?.data || "");
+            const apiMsg = apiError.response?.data && apiError.response.data.message;
+            res.json({
+                success: false,
+                message: apiMsg || "Network gateway error. Please try again later."
+            });
         }
     });
 });
@@ -363,3 +386,4 @@ app.get('/register', (req, res) => {
 app.listen(PORT, () => {
     console.log(`USEsub persistent engine running live on port ${PORT}`);
 });
+                        
