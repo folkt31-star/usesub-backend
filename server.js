@@ -81,11 +81,11 @@ const PROFIT_MARGIN = 60;
 
 // Replace bigisubPlanId with the exact numeric plan IDs from GET /api/v2/vtu/data/plans/
 const rawPlans = [
-    { id: "mtn-1gb", network: "MTN", name: "MTN 1GB SME (1 Month)", basePrice: 340, profit: PROFIT_MARGIN, bigisubPlanId: 101 },
-    { id: "mtn-2gb", network: "MTN", name: "MTN 2GB SME (1 Month)", basePrice: 640, profit: PROFIT_MARGIN, bigisubPlanId: 102 },
-    { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB Corporate (1 Month)", basePrice: 360, profit: PROFIT_MARGIN, bigisubPlanId: 201 },
-    { id: "glo-1gb", network: "Glo", name: "Glo 1GB Data (1 Month)", basePrice: 320, profit: PROFIT_MARGIN, bigisubPlanId: 301 },
-    { id: "9mobile-1gb", network: "9mobile", name: "9mobile 1GB Data (1 Month)", basePrice: 340, profit: PROFIT_MARGIN, bigisubPlanId: 401 }
+    { id: "mtn-1gb", network: "MTN", name: "MTN 1GB SME (7days weekly)", basePrice: 435, profit: PROFIT_MARGIN, bigisubPlanId: 207 },
+    { id: "mtn-2gb", network: "MTN", name: "MTN 2GB SME (30 Days)", basePrice: 1160, profit: PROFIT_MARGIN, bigisubPlanId: 3 },
+    { id: "glo-1gb", network: "Glo", name: "Glo 1GB SME (1 day)", basePrice: 245, profit: PROFIT_MARGIN, bigisubPlanId: 258 },
+    { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB GIFTING (7days weekly)", basePrice: 801, profit: PROFIT_MARGIN, bigisubPlanId: 172 },
+    { id: "9mobile-2gb", network: "9mobile", name: "9mobile 2GB DataTransfer (30 Days)", basePrice: 990, profit: PROFIT_MARGIN, bigisubPlanId: 190 }
 ];
 
 const localDataPlans = rawPlans.map(plan => ({
