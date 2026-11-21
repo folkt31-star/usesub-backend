@@ -260,7 +260,27 @@ app.post('/api/fund-wallet', (req, res) => {
 });
 
 // Flutterwave Webhook Endpoint for Automated Card/Bank Funding
-app.post('/api/flw-webhook', (req, res) => {// Verify Flutterwave payment on backend before crediting user wallet});
+app.post('/api/flw-webhook', (req, res) => {
+    const event = req.body;
+    if (event && event.event === 'charge.completed' && event.data && event.data.status === 'successful') {
+        const customerEmail = event.data.customer && event.data.customer.email;
+        const amountPaid = parseFloat(event.data.amount);
+
+        if (customerEmail && amountPaid > 0) {
+            db.get(`SELECT * FROM users WHERE email = ? OR phone = ?`, [customerEmail, customerEmail], (err, user) => {
+                if (user) {
+                    const newBalance = Number((user.walletBalance + amountPaid).toFixed(2));
+                    db.run(`UPDATE users SET walletBalance = ? WHERE id = ?`, [newBalance, user.id], () => {
+                        console.log(`[FLUTTERWAVE FUNDING SUCCESS] Credited ₦${amountPaid} to user ${user.phone}`);
+                    });
+                }
+            });
+        }
+    }
+    res.sendStatus(200);
+});
+
+// Verify Flutterwave payment on backend before crediting user wallet
 app.post('/api/verify-flw-payment', async (req, res) => {
     const targetPhone = getRequestPhone(req);
     const { transaction_id } = req.body || {};
@@ -314,6 +334,7 @@ app.post('/api/verify-flw-payment', async (req, res) => {
         return res.json({ success: false, message: "Payment verification failed." });
     }
 });
+               
     
     const event = req.body;
     if (event && event.event === 'charge.completed' && event.data && event.data.status === 'successful') {
