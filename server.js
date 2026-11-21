@@ -334,26 +334,6 @@ app.post('/api/verify-flw-payment', async (req, res) => {
         return res.json({ success: false, message: "Payment verification failed." });
     }
 });
-               
-    
-    const event = req.body;
-    if (event && event.event === 'charge.completed' && event.data && event.data.status === 'successful') {
-        const customerEmail = event.data.customer && event.data.customer.email;
-        const amountPaid = parseFloat(event.data.amount);
-
-        if (customerEmail && amountPaid > 0) {
-            db.get(`SELECT * FROM users WHERE email = ? OR phone = ?`, [customerEmail, customerEmail], (err, user) => {
-                if (user) {
-                    const newBalance = Number((user.walletBalance + amountPaid).toFixed(2));
-                    db.run(`UPDATE users SET walletBalance = ? WHERE id = ?`, [newBalance, user.id], () => {
-                        console.log(`[FLUTTERWAVE FUNDING SUCCESS] Credited ₦${amountPaid} to user ${user.phone}`);
-                    });
-                }
-            });
-        }
-    }
-    res.sendStatus(200);
-});
 
 // Endpoint to process data purchase via Bigisub API & SQLite balance update
 app.post('/api/buy-data', async (req, res) => {
