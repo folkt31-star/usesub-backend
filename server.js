@@ -260,7 +260,7 @@ app.post('/api/fund-wallet', (req, res) => {
 });
 
 // Flutterwave Webhook Endpoint for Automated Card/Bank Funding
-app.post('/api/flw-webhook', (req, res) => {// Verify Flutterwave payment on backend before crediting user wallet
+app.post('/api/flw-webhook', (req, res) => {// Verify Flutterwave payment on backend before crediting user wallet});
 app.post('/api/verify-flw-payment', async (req, res) => {
     const targetPhone = getRequestPhone(req);
     const { transaction_id } = req.body || {};
