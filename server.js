@@ -260,7 +260,61 @@ app.post('/api/fund-wallet', (req, res) => {
 });
 
 // Flutterwave Webhook Endpoint for Automated Card/Bank Funding
-app.post('/api/flw-webhook', (req, res) => {
+app.post('/api/flw-webhook', (req, res) => {// Verify Flutterwave payment on backend before crediting user wallet
+app.post('/api/verify-flw-payment', async (req, res) => {
+    const targetPhone = getRequestPhone(req);
+    const { transaction_id } = req.body || {};
+
+    if (!targetPhone || !transaction_id) {
+        return res.json({ success: false, message: "Missing user session or transaction ID." });
+    }
+
+    try {
+        const flwResponse = await axios.get(
+            `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transaction_id)}/verify`,
+            {
+                headers: {
+                    Authorization: `Bearer ${String(process.env.FLW_SECRET_KEY || '').trim()}`
+                }
+            }
+        );
+
+        const txData = flwResponse.data && flwResponse.data.data;
+        if (
+            flwResponse.data &&
+            flwResponse.data.status === 'success' &&
+            txData &&
+            txData.status === 'successful' &&
+            txData.currency === 'NGN' &&
+            Number(txData.amount) > 0
+        ) {
+            const paidAmount = Number(txData.amount);
+            db.get(`SELECT walletBalance FROM users WHERE phone = ?`, [targetPhone], (err, row) => {
+                if (err || !row) {
+                    return res.json({ success: false, message: "User account not found." });
+                }
+
+                const newBalance = Number((row.walletBalance + paidAmount).toFixed(2));
+                db.run(`UPDATE users SET walletBalance = ? WHERE phone = ?`, [newBalance, targetPhone], (updateErr) => {
+                    if (updateErr) {
+                        return res.json({ success: false, message: "Failed to credit wallet balance." });
+                    }
+                    return res.json({
+                        success: true,
+                        message: `Wallet credited with ₦${paidAmount}!`,
+                        newBalance: newBalance
+                    });
+                });
+            });
+        } else {
+            return res.json({ success: false, message: "Payment could not be verified as successful." });
+        }
+    } catch (error) {
+        console.error("Flutterwave verify error:", error.message, error.response?.data || "");
+        return res.json({ success: false, message: "Payment verification failed." });
+    }
+});
+    
     const event = req.body;
     if (event && event.event === 'charge.completed' && event.data && event.data.status === 'successful') {
         const customerEmail = event.data.customer && event.data.customer.email;
