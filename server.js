@@ -85,6 +85,7 @@ const rawPlans = [
     { id: "mtn-2gb", network: "MTN", name: "MTN 2GB SME (30 Days)", basePrice: 1160, profit: PROFIT_MARGIN, bigisubPlanId: 3 },
     { id: "glo-1gb", network: "Glo", name: "Glo 1GB SME (1 day)", basePrice: 245, profit: PROFIT_MARGIN, bigisubPlanId: 258 },
     { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB GIFTING (7days weekly)", basePrice: 801, profit: PROFIT_MARGIN, bigisubPlanId: 172 },
+    { id: "airtel-10gb", network: "Airtel", name: "Airtel 10GB SME (30 Days)", basePrice: 3450, profit: PROFIT_MARGIN, bigisubPlanId: 105 },
     { id: "9mobile-2gb", network: "9mobile", name: "9mobile 2GB DataTransfer (30 Days)", basePrice: 990, profit: PROFIT_MARGIN, bigisubPlanId: 190 }
 ];
 
