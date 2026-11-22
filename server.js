@@ -34,25 +34,33 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Initialize SQLite Database
-const dbFile = path.join(__dirname, 'usesub.db');
-const db = new sqlite3.Database(dbFile, (err) => {
-    if (err) {
-        console.error("Error opening database:", err.message);
-    } else {
-        console.log("Connected to the SQLite database.");
-        db.run(`CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT,
-            phone TEXT UNIQUE,
-            email TEXT,
-            pin TEXT,
-            walletBalance REAL DEFAULT 0,
-            isVerified INTEGER DEFAULT 0,
-            verificationCode TEXT
-        )`);
-    }
+// Initialize Turso Cloud Database
+const { createClient } = require('@libsql/client');
+
+const turso = createClient({
+  url: process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN,
 });
+
+(async () => {
+  try {
+    await turso.execute(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        phone TEXT UNIQUE,
+        email TEXT,
+        pin TEXT,
+        walletBalance REAL DEFAULT 0,
+        isVerified INTEGER DEFAULT 0,
+        verificationCode TEXT
+      )
+    `);
+    console.log('Connected to Turso database.');
+  } catch (err) {
+    console.error('Error initializing Turso database:', err.message);
+  }
+})();
 
 // Fallback session tracking for single-user testing
 let activeUserPhone = null;
