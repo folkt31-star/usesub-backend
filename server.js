@@ -109,6 +109,95 @@ function isValidNetworkPrefix(network, phone) {
 
     return true;
 }
+// Buy Airtime via Bigisub VTU
+app.post('/api/buy-airtime', async (req, res) => {
+  try {
+    const userPhone = getRequestPhone(req);
+    const { recipientPhone, network, amount } = req.body;
+    const numericAmount = Number(amount);
+    const cleanRecipient = String(recipientPhone || '').trim();
+    const normalizedNetwork = String(network || '').trim();
+    const networkKey = Object.keys(BIGISUB_NETWORK_IDS).find(
+      (k) => k.toUpperCase() === normalizedNetwork.toUpperCase()
+    );
+    const networkId = networkKey ? BIGISUB_NETWORK_IDS[networkKey] : null;
+
+    if (!userPhone || !cleanRecipient || !networkId || !numericAmount || numericAmount < 50) {
+      return res.status(400).json({ success: false, message: 'Invalid airtime request details.' });
+    }
+
+    // Match network casing expected by isValidNetworkPrefix ('MTN', 'Airtel', 'Glo', '9mobile')
+    const prefixNetworkMap = {
+      MTN: 'MTN',
+      GLO: 'Glo',
+      AIRTEL: 'Airtel',
+      '9MOBILE': '9mobile'
+    };
+    const prefixCheckNetwork = prefixNetworkMap[networkKey.toUpperCase()];
+
+    if (!isValidNetworkPrefix(prefixCheckNetwork, cleanRecipient)) {
+      return res.status(400).json({
+        success: false,
+        message: `The number ${cleanRecipient} does not match ${networkKey}. Please check the network and try again.`
+      });
+    }
+
+    db.get('SELECT * FROM users WHERE phone = ?', [userPhone], async (err, row) => {
+      if (err || !row) {
+        return res.status(400).json({ success: false, message: 'User session not found.' });
+      }
+
+      if (Number(row.walletBalance || 0) < numericAmount) {
+        return res.status(400).json({ success: false, message: 'Insufficient wallet balance.' });
+      }
+
+      try {
+        const bigisubRes = await fetch('https://api.bigisub.ng/api/v2/vtu/airtime/purchase/', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Token ${process.env.BIGISUB_API_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            network: networkId,
+            phone_number: cleanRecipient,
+            amount: String(numericAmount),
+            airtime_type: 'vtu',
+            pin: process.env.BIGISUB_PIN
+          })
+        });
+
+        const bigisubData = await bigisubRes.json();
+
+        if (!bigisubRes.ok || !bigisubData.success) {
+          return res.status(400).json({
+            success: false,
+            message: bigisubData.message || 'Bigisub airtime delivery failed.'
+          });
+        }
+
+        const newBalance = Number(row.walletBalance) - numericAmount;
+        db.run('UPDATE users SET walletBalance = ? WHERE phone = ?', [newBalance, userPhone], (updateErr) => {
+          if (updateErr) {
+            return res.status(500).json({ success: false, message: 'Airtime sent, but failed to update wallet balance.' });
+          }
+
+          return res.json({
+            success: true,
+            message: `₦${numericAmount} ${networkKey} airtime sent to ${cleanRecipient}!`,
+            newBalance
+          });
+        });
+      } catch (apiErr) {
+        console.error('Bigisub airtime API error:', apiErr);
+        return res.status(500).json({ success: false, message: 'Error connecting to airtime provider.' });
+      }
+    });
+  } catch (err) {
+    console.error('Airtime route error:', err);
+    return res.status(500).json({ success: false, message: 'Server error processing airtime.' });
+  }
+});
 
 // Get current user from database
 app.get('/api/user', (req, res) => {
