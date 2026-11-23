@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const axios = require('axios'); // For making secure API calls to Bigisub & Flutterwave
+const axios = require('axios'); // For making secure API calls to Bigisub, Flutterwave & Resend
 const { createClient } = require('@libsql/client');
 require('dotenv').config();
 
@@ -54,6 +54,9 @@ const turso = createClient({
                 verificationCode TEXT
             )
         `);
+        // Safely add new auth columns without breaking existing users or balances
+        try { await turso.execute(`ALTER TABLE users ADD COLUMN googleId TEXT`); } catch (e) {}
+        try { await turso.execute(`ALTER TABLE users ADD COLUMN emailVerified INTEGER DEFAULT 0`); } catch (e) {}
         console.log('Connected to Turso database.');
     } catch (err) {
         console.error('Error initializing Turso database:', err.message);
@@ -329,8 +332,7 @@ app.post('/api/verify-otp', async (req, res) => {
         return res.json({ success: false, message: "Verification state error." });
     }
 });
-
-// Endpoint for frontend to fetch plans (includes profit in price)
+                      // Endpoint for frontend to fetch plans (includes profit in price)
 app.get('/api/data-plans', (req, res) => {
     res.json({ success: true, plans: localDataPlans });
 });
@@ -376,7 +378,8 @@ app.post('/api/fund-wallet', async (req, res) => {
         return res.json({ success: false, message: "Failed to update wallet balance." });
     }
 });
-                                                                          // Flutterwave Webhook Endpoint for Automated Card/Bank Funding
+
+// Flutterwave Webhook Endpoint for Automated Card/Bank Funding
 app.post('/api/flw-webhook', async (req, res) => {
     const event = req.body;
     if (event && event.event === 'charge.completed' && event.data && event.data.status === 'successful') {
@@ -551,7 +554,336 @@ app.post('/api/buy-data', async (req, res) => {
         return res.json({ success: false, message: "Data purchase failed. Please try again." });
     }
 });
+                         // ==========================================
+// NEW AUTH FLOW: GOOGLE, RESEND OTP & LOGIN
+// ==========================================
+
+// 1. Google Sign-In / Sign-Up Authorization
+app.post('/api/auth/google', async (req, res) => {
+    const { credential } = req.body || {};
+    if (!credential) {
+        return res.status(400).json({ success: false, message: 'Missing Google credential token.' });
+    }
+
+    try {
+        const googleRes = await axios.get(
+            `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+        );
+        const payload = googleRes.data;
+
+        if (process.env.GOOGLE_CLIENT_ID && payload.aud !== process.env.GOOGLE_CLIENT_ID.trim()) {
+            return res.status(401).json({ success: false, message: 'Invalid Google Client ID.' });
+        }
+
+        const googleId = payload.sub;
+        const email = String(payload.email || '').trim().toLowerCase();
+        const name = payload.name || email.split('@')[0] || 'User';
+
+        const existingRes = await turso.execute({
+            sql: 'SELECT * FROM users WHERE googleId = ? OR LOWER(email) = ?',
+            args: [googleId, email]
+        });
+        let user = existingRes.rows[0];
+
+        if (!user) {
+            await turso.execute({
+                sql: 'INSERT INTO users (name, email, googleId, walletBalance, isVerified, emailVerified) VALUES (?, ?, ?, 0, 1, 1)',
+                args: [name, email, googleId]
+            });
+            const newRes = await turso.execute({
+                sql: 'SELECT * FROM users WHERE LOWER(email) = ?',
+                args: [email]
+            });
+            user = newRes.rows[0];
+        } else if (!user.googleId) {
+            await turso.execute({
+                sql: 'UPDATE users SET googleId = ?, emailVerified = 1 WHERE id = ?',
+                args: [googleId, user.id]
+            });
+        }
+
+        if (user && user.phone) {
+            activeUserPhone = user.phone;
+        }
+
+        const needsPhoneSetup = !user.phone || !user.pin;
+        return res.json({
+            success: true,
+            needsPhoneSetup,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone || null,
+                walletBalance: Number(user.walletBalance || 0)
+            }
+        });
+    } catch (err) {
+        console.error('Google auth error:', err.message, err.response?.data || '');
+        return res.status(401).json({ success: false, message: 'Google authorization failed.' });
+    }
+});
+
+// 2. Send Email Verification OTP via Resend API
+app.post('/api/auth/email/send-otp', async (req, res) => {
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const name = String((req.body && req.body.name) || '').trim();
+
+    if (!email || !email.includes('@')) {
+        return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    try {
+        const existingRes = await turso.execute({
+            sql: 'SELECT * FROM users WHERE LOWER(email) = ?',
+            args: [email]
+        });
+        const existingUser = existingRes.rows[0];
+
+        if (existingUser) {
+            await turso.execute({
+                sql: 'UPDATE users SET verificationCode = ?, name = COALESCE(NULLIF(?, ""), name) WHERE id = ?',
+                args: [otpCode, name, existingUser.id]
+            });
+        } else {
+            await turso.execute({
+                sql: 'INSERT INTO users (name, email, walletBalance, isVerified, emailVerified, verificationCode) VALUES (?, ?, 0, 0, 0, ?)',
+                args: [name || email.split('@')[0], email, otpCode]
+            });
+        }
+
+        const resendKey = String(process.env.RESEND_API_KEY || '').trim();
+        const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'USEsub <onboarding@resend.dev>').trim();
+
+        if (!resendKey) {
+            console.log(`[RESEND NOT SET - DEV OTP] Code for ${email}: ${otpCode}`);
+            return res.json({
+                success: true,
+                message: 'Verification code generated (set RESEND_API_KEY in Render to deliver live emails).'
+            });
+        }
+
+        await axios.post(
+            'https://api.resend.com/emails',
+            {
+                from: fromEmail,
+                to: [email],
+                subject: 'Your USEsub Verification Code',
+                html: `<div style="font-family:sans-serif;padding:20px;">
+                         <h2>Verify Your USEsub Email</h2>
+                         <p>Your 6-digit verification code is:</p>
+                         <h1 style="letter-spacing:4px;color:#16a34a;">${otpCode}</h1>
+                         <p>Enter this code on USEsub to continue setting up your VTU account.</p>
+                       </div>`
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${resendKey}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        return res.json({
+            success: true,
+            message: `Verification code sent directly to ${email}!`
+        });
+    } catch (err) {
+        console.error('Resend email OTP error:', err.message, err.response?.data || '');
+        return res.status(500).json({ success: false, message: 'Failed to send verification email.' });
+    }
+});
+
+// 3. Verify Email OTP Code
+app.post('/api/auth/email/verify-otp', async (req, res) => {
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const code = String((req.body && req.body.code) || '').trim();
+
+    if (!email || !code) {
+        return res.status(400).json({ success: false, message: 'Email and verification code are required.' });
+    }
+
+    try {
+        const result = await turso.execute({
+            sql: 'SELECT * FROM users WHERE LOWER(email) = ?',
+            args: [email]
+        });
+        const user = result.rows[0];
+
+        if (!user || String(user.verificationCode) !== code) {
+            return res.status(400).json({ success: false, message: 'Invalid verification code.' });
+        }
+
+        await turso.execute({
+            sql: 'UPDATE users SET emailVerified = 1, verificationCode = NULL WHERE id = ?',
+            args: [user.id]
+        });
+
+        if (user.phone) {
+            activeUserPhone = user.phone;
+        }
+
+        const needsPhoneSetup = !user.phone || !user.pin;
+        return res.json({
+            success: true,
+            needsPhoneSetup,
+            message: 'Email verified successfully!',
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone || null,
+                walletBalance: Number(user.walletBalance || 0)
+            }
+        });
+    } catch (err) {
+        console.error('Verify email OTP error:', err.message);
+        return res.status(500).json({ success: false, message: 'Error verifying email code.' });
+    }
+});
+
+// 4. Complete Phone Number & 4-Digit PIN Setup (After Google or Email Verification)
+app.post('/api/auth/complete-phone', async (req, res) => {
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const cleanPhone = String((req.body && req.body.phone) || '').trim();
+    const cleanPin = String((req.body && req.body.pin) || '').trim();
+
+    if (!email || cleanPhone.length < 10 || cleanPin.length < 4) {
+        return res.status(400).json({ success: false, message: 'Enter a valid email, phone number, and 4-digit PIN.' });
+    }
+
+    try {
+        const phoneCheck = await turso.execute({
+            sql: 'SELECT * FROM users WHERE phone = ? AND (email IS NULL OR LOWER(email) != ?)',
+            args: [cleanPhone, email]
+        });
+        if (phoneCheck.rows[0]) {
+            return res.status(400).json({ success: false, message: 'This phone number is already linked to another account.' });
+        }
+
+        await turso.execute({
+            sql: 'UPDATE users SET phone = ?, pin = ?, isVerified = 1 WHERE LOWER(email) = ?',
+            args: [cleanPhone, cleanPin, email]
+        });
+
+        const updatedRes = await turso.execute({
+            sql: 'SELECT * FROM users WHERE LOWER(email) = ?',
+            args: [email]
+        });
+        const user = updatedRes.rows[0];
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'Account not found. Please sign up first.' });
+        }
+
+        activeUserPhone = cleanPhone;
+        return res.json({
+            success: true,
+            message: 'Account registration completed!',
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone,
+                walletBalance: Number(user.walletBalance || 0)
+            }
+        });
+    } catch (err) {
+        console.error('Complete phone setup error:', err.message);
+        return res.status(500).json({ success: false, message: 'Failed to save phone number and PIN.' });
+    }
+});
+
+// 5. Easy Returning User Login (Email or Phone + 4-Digit PIN)
+app.post('/api/auth/login', async (req, res) => {
+    const identifier = String((req.body && req.body.identifier) || '').trim().toLowerCase();
+    const cleanPin = String((req.body && req.body.pin) || '').trim();
+
+    if (!identifier || !cleanPin) {
+        return res.status(400).json({ success: false, message: 'Enter your email or phone number and PIN.' });
+    }
+
+    try {
+        const result = await turso.execute({
+            sql: 'SELECT * FROM users WHERE LOWER(email) = ? OR phone = ?',
+            args: [identifier, identifier]
+        });
+        const user = result.rows[0];
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'Account not found. Please sign up first.' });
+        }
+
+        if (String(user.pin) !== cleanPin) {
+            return res.status(401).json({ success: false, message: 'Incorrect PIN. Please try again.' });
+        }
+
+        if (user.phone) {
+            activeUserPhone = user.phone;
+        }
+
+        return res.json({
+            success: true,
+            needsPhoneSetup: !user.phone,
+            message: 'Welcome back!',
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone || null,
+                walletBalance: Number(user.walletBalance || 0)
+            }
+        });
+    } catch (err) {
+        console.error('Login error:', err.message);
+        return res.status(500).json({ success: false, message: 'Server error during login.' });
+    }
+});
+
+// 6. Recognize Returning User Session (Auto-sync profile & wallet balance)
+app.post('/api/auth/session', async (req, res) => {
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const phone = String((req.body && req.body.phone) || '').trim();
+
+    if (!email && !phone) {
+        return res.status(400).json({ success: false, message: 'No session identifier provided.' });
+    }
+
+    try {
+        const result = await turso.execute({
+            sql: 'SELECT * FROM users WHERE (email IS NOT NULL AND email != "" AND LOWER(email) = ?) OR (phone IS NOT NULL AND phone != "" AND phone = ?) LIMIT 1',
+            args: [email, phone]
+        });
+        const user = result.rows[0];
+
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found.' });
+        }
+
+        if (user.phone) {
+            activeUserPhone = user.phone;
+        }
+
+        return res.json({
+            success: true,
+            needsPhoneSetup: !user.phone || !user.pin,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                phone: user.phone || null,
+                walletBalance: Number(user.walletBalance || 0)
+            }
+        });
+    } catch (err) {
+        console.error('Session check error:', err.message);
+        return res.status(500).json({ success: false, message: 'Failed to restore session.' });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+            
