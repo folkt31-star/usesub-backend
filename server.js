@@ -95,6 +95,17 @@ const rawPlans = [
     { id: "glo-1gb", network: "Glo", name: "Glo 1GB SME (1 day)", basePrice: 245, profit: PROFIT_MARGIN, bigisubPlanId: 258 },
     { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB GIFTING (7days weekly)", basePrice: 801, profit: PROFIT_MARGIN, bigisubPlanId: 172 },
     { id: "airtel-10gb", network: "Airtel", name: "Airtel 10GB SME (30 Days)", basePrice: 3450, profit: PROFIT_MARGIN, bigisubPlanId: 105 },
+    { id: "airtel-1gb-3d-social", network: "Airtel", name: "Airtel 1GB GIFTING (3 days social bundle (loan safe))", basePrice: 303, profit: PROFIT_MARGIN, bigisubPlanId: 342 },
+    { id: "airtel-500mb-1d", network: "Airtel", name: "Airtel 500MB GIFTING (1 day (loan safe))", basePrice: 356, profit: PROFIT_MARGIN, bigisubPlanId: 339 },
+    { id: "airtel-1gb-1d", network: "Airtel", name: "Airtel 1GB GIFTING (1 day (loan safe))", basePrice: 505, profit: PROFIT_MARGIN, bigisubPlanId: 340 },
+    { id: "airtel-2gb-2d-a", network: "Airtel", name: "Airtel 2GB GIFTING (2 days (loan safe))", basePrice: 612, profit: PROFIT_MARGIN, bigisubPlanId: 173 },
+    { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB GIFTING (7days weekly)", basePrice: 801, profit: PROFIT_MARGIN, bigisubPlanId: 172 },
+    { id: "airtel-4gb-2d", network: "Airtel", name: "Airtel 4GB GIFTING (2 days (loan safe))", basePrice: 1010, profit: PROFIT_MARGIN, bigisubPlanId: 200 },
+    { id: "airtel-2gb-30d", network: "Airtel", name: "Airtel 2GB GIFTING (30Days (loan safe))", basePrice: 1503, profit: PROFIT_MARGIN, bigisubPlanId: 175 },
+    { id: "airtel-6gb-2d", network: "Airtel", name: "Airtel 6GB GIFTING (2 days)", basePrice: 1517, profit: PROFIT_MARGIN, bigisubPlanId: 247 },
+    { id: "airtel-3gb-30d", network: "Airtel", name: "Airtel 3GB GIFTING (30Days)", basePrice: 2008, profit: PROFIT_MARGIN, bigisubPlanId: 176 },
+    { id: "airtel-4gb-30d", network: "Airtel", name: "Airtel 4GB GIFTING (30 Days)", basePrice: 2538, profit: PROFIT_MARGIN, bigisubPlanId: 203 },
+    { id: "airtel-10gb-30d", network: "Airtel", name: "Airtel 10GB GIFTING (30 Days (loan safe))", basePrice: 4056, profit: PROFIT_MARGIN, bigisubPlanId: 178 } 
     { id: "9mobile-2gb", network: "9mobile", name: "9mobile 2GB DataTransfer (30 Days)", basePrice: 990, profit: PROFIT_MARGIN, bigisubPlanId: 190 }
 ];
 
