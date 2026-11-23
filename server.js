@@ -218,10 +218,11 @@ app.get('/api/user', async (req, res) => {
     }
 
     try {
-        const result = await turso.execute({
-            sql: 'SELECT * FROM users WHERE phone = ?',
-            args: [targetPhone]
+                const result = await turso.execute({
+            sql: "SELECT * FROM users WHERE (email IS NOT NULL AND email != '' AND LOWER(email) = ?) OR (phone IS NOT NULL AND phone != '' AND phone = ?) LIMIT 1",
+            args: [email, phone]
         });
+        
         const row = result.rows[0];
         if (!row) {
             return res.json({ success: false, message: "User session not found" });
