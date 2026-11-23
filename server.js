@@ -218,11 +218,10 @@ app.get('/api/user', async (req, res) => {
     }
 
     try {
-                const result = await turso.execute({
-            sql: "SELECT * FROM users WHERE (email IS NOT NULL AND email != '' AND LOWER(email) = ?) OR (phone IS NOT NULL AND phone != '' AND phone = ?) LIMIT 1",
-            args: [email, phone]
+        const result = await turso.execute({
+            sql: 'SELECT * FROM users WHERE phone = ?',
+            args: [targetPhone]
         });
-        
         const row = result.rows[0];
         if (!row) {
             return res.json({ success: false, message: "User session not found" });
@@ -333,7 +332,7 @@ app.post('/api/verify-otp', async (req, res) => {
         return res.json({ success: false, message: "Verification state error." });
     }
 });
-                      // Endpoint for frontend to fetch plans (includes profit in price)
+    // Endpoint for frontend to fetch plans (includes profit in price)
 app.get('/api/data-plans', (req, res) => {
     res.json({ success: true, plans: localDataPlans });
 });
@@ -555,7 +554,7 @@ app.post('/api/buy-data', async (req, res) => {
         return res.json({ success: false, message: "Data purchase failed. Please try again." });
     }
 });
-                         // ==========================================
+                             // ==========================================
 // NEW AUTH FLOW: GOOGLE, RESEND OTP & LOGIN
 // ==========================================
 
@@ -645,7 +644,7 @@ app.post('/api/auth/email/send-otp', async (req, res) => {
 
         if (existingUser) {
             await turso.execute({
-                sql: 'UPDATE users SET verificationCode = ?, name = COALESCE(NULLIF(?, ""), name) WHERE id = ?',
+                sql: "UPDATE users SET verificationCode = ?, name = COALESCE(NULLIF(?, ''), name) WHERE id = ?",
                 args: [otpCode, name, existingUser.id]
             });
         } else {
@@ -656,7 +655,7 @@ app.post('/api/auth/email/send-otp', async (req, res) => {
         }
 
         const resendKey = String(process.env.RESEND_API_KEY || '').trim();
-        const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'USEsub <onboarding@resend.dev>').trim();
+        const fromEmail = String(process.env.RESEND_FROM_EMAIL || 'noreply@usesub.com.ng').trim();
 
         if (!resendKey) {
             console.log(`[RESEND NOT SET - DEV OTP] Code for ${email}: ${otpCode}`);
@@ -854,7 +853,7 @@ app.post('/api/auth/session', async (req, res) => {
 
     try {
         const result = await turso.execute({
-            sql: 'SELECT * FROM users WHERE (email IS NOT NULL AND email != "" AND LOWER(email) = ?) OR (phone IS NOT NULL AND phone != "" AND phone = ?) LIMIT 1',
+            sql: "SELECT * FROM users WHERE (email IS NOT NULL AND email != '' AND LOWER(email) = ?) OR (phone IS NOT NULL AND phone != '' AND phone = ?) LIMIT 1",
             args: [email, phone]
         });
         const user = result.rows[0];
@@ -887,4 +886,4 @@ app.post('/api/auth/session', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
-            
+    
