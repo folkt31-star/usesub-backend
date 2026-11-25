@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const axios = require('axios'); // For making secure API calls to Bigisub, Flutterwave & Resend
 const { createClient } = require('@libsql/client');
 require('dotenv').config();
@@ -22,7 +23,7 @@ app.use((req, res, next) => {
     }
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Phone');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Phone, X-Timestamp, X-Signature');
 
     if (req.method === 'OPTIONS') {
         return res.sendStatus(204);
@@ -30,8 +31,12 @@ app.use((req, res, next) => {
     next();
 });
 
-// Middleware
-app.use(express.json());
+// Middleware (preserve rawBody for HMAC webhook signature verification)
+app.use(express.json({
+    verify: (req, _res, buf) => {
+        req.rawBody = buf ? buf.toString('utf8') : '';
+    }
+}));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Initialize Turso Cloud Database
@@ -39,6 +44,8 @@ const turso = createClient({
     url: process.env.TURSO_DATABASE_URL,
     authToken: process.env.TURSO_AUTH_TOKEN,
 });
+
+const processedWebhookRefs = new Set();
 
 (async () => {
     try {
@@ -91,7 +98,7 @@ const PROFIT_MARGIN = 60;
 // Replace bigisubPlanId with the exact numeric plan IDs from GET /api/v2/vtu/data/plans/
 const rawPlans = [
     { id: "mtn-1gb", network: "MTN", name: "MTN 1GB SME (7days weekly)", basePrice: 435, profit: PROFIT_MARGIN, bigisubPlanId: 207 },
-        { id: "mtn-500mb-sme", network: "MTN", name: "MTN 500MB SME (7-30days)", basePrice: 375, profit: PROFIT_MARGIN, bigisubPlanId: 303 },
+    { id: "mtn-500mb-sme", network: "MTN", name: "MTN 500MB SME (7-30days)", basePrice: 375, profit: PROFIT_MARGIN, bigisubPlanId: 303 },
     { id: "mtn-1gb-datatransfer-7d", network: "MTN", name: "MTN 1GB DataTransfer (7days)", basePrice: 425, profit: PROFIT_MARGIN, bigisubPlanId: 206 },
     { id: "mtn-1gb-sme-7d", network: "MTN", name: "MTN 1GB SME (7days weekly SME)", basePrice: 435, profit: PROFIT_MARGIN, bigisubPlanId: 207 },
     { id: "mtn-1gb-gifting-1d", network: "MTN", name: "MTN 1GB GIFTING (1 day)", basePrice: 493, profit: PROFIT_MARGIN, bigisubPlanId: 161 },
@@ -102,10 +109,10 @@ const rawPlans = [
     { id: "mtn-4gb-gifting-2d", network: "MTN", name: "MTN 4GB GIFTING (2days)", basePrice: 1195, profit: PROFIT_MARGIN, bigisubPlanId: 210 },
     { id: "mtn-2gb-gifting-30d", network: "MTN", name: "MTN 2GB GIFTING (30 days)", basePrice: 1495, profit: PROFIT_MARGIN, bigisubPlanId: 163 },
     { id: "mtn-3gb-sme-30d", network: "MTN", name: "MTN 3GB SME (30 Days)", basePrice: 1720, profit: PROFIT_MARGIN, bigisubPlanId: 4 },
-    { id: "mtn-5gb-sme-30d", network: "MTN", name: "MTN 5GB SME (30 Days)", basePrice: 2200, profit: PROFIT_MARGIN, bigisubPlanId: 5},
+    { id: "mtn-5gb-sme-30d", network: "MTN", name: "MTN 5GB SME (30 Days)", basePrice: 2200, profit: PROFIT_MARGIN, bigisubPlanId: 5 },
     { id: "mtn-2gb", network: "MTN", name: "MTN 2GB SME (30 Days)", basePrice: 1160, profit: PROFIT_MARGIN, bigisubPlanId: 3 },
     { id: "glo-1gb", network: "Glo", name: "Glo 1GB SME (1 day)", basePrice: 245, profit: PROFIT_MARGIN, bigisubPlanId: 258 },
-        { id: "glo-1gb-sme-1d", network: "Glo", name: "Glo 1GB SME (1 days)", basePrice: 245, profit: PROFIT_MARGIN, bigisubPlanId: 258 },
+    { id: "glo-1gb-sme-1d", network: "Glo", name: "Glo 1GB SME (1 days)", basePrice: 245, profit: PROFIT_MARGIN, bigisubPlanId: 258 },
     { id: "glo-1gb-datatransfer-1d-social", network: "Glo", name: "Glo 1GB DataTransfer (1day all social med)", basePrice: 290, profit: PROFIT_MARGIN, bigisubPlanId: 215 },
     { id: "glo-1gb-datatransfer-social", network: "Glo", name: "Glo 1GB DataTransfer (social plan)", basePrice: 300, profit: PROFIT_MARGIN, bigisubPlanId: 253 },
     { id: "glo-1-5gb-sme-1d", network: "Glo", name: "Glo 1.5GB SME (1 day)", basePrice: 350, profit: PROFIT_MARGIN, bigisubPlanId: 360 },
@@ -123,14 +130,13 @@ const rawPlans = [
     { id: "airtel-500mb-1d", network: "Airtel", name: "Airtel 500MB GIFTING (1 day (loan safe))", basePrice: 356, profit: PROFIT_MARGIN, bigisubPlanId: 339 },
     { id: "airtel-1gb-1d", network: "Airtel", name: "Airtel 1GB GIFTING (1 day (loan safe))", basePrice: 505, profit: PROFIT_MARGIN, bigisubPlanId: 340 },
     { id: "airtel-2gb-2d-a", network: "Airtel", name: "Airtel 2GB GIFTING (2 days (loan safe))", basePrice: 612, profit: PROFIT_MARGIN, bigisubPlanId: 173 },
-    { id: "airtel-1gb", network: "Airtel", name: "Airtel 1GB GIFTING (7days weekly)", basePrice: 801, profit: PROFIT_MARGIN, bigisubPlanId: 172 },
     { id: "airtel-4gb-2d", network: "Airtel", name: "Airtel 4GB GIFTING (2 days (loan safe))", basePrice: 1010, profit: PROFIT_MARGIN, bigisubPlanId: 200 },
     { id: "airtel-2gb-30d", network: "Airtel", name: "Airtel 2GB GIFTING (30Days (loan safe))", basePrice: 1503, profit: PROFIT_MARGIN, bigisubPlanId: 175 },
     { id: "airtel-6gb-2d", network: "Airtel", name: "Airtel 6GB GIFTING (2 days)", basePrice: 1517, profit: PROFIT_MARGIN, bigisubPlanId: 247 },
     { id: "airtel-3gb-30d", network: "Airtel", name: "Airtel 3GB GIFTING (30Days)", basePrice: 2008, profit: PROFIT_MARGIN, bigisubPlanId: 176 },
     { id: "airtel-4gb-30d", network: "Airtel", name: "Airtel 4GB GIFTING (30 Days)", basePrice: 2538, profit: PROFIT_MARGIN, bigisubPlanId: 203 },
     { id: "airtel-10gb-30d", network: "Airtel", name: "Airtel 10GB GIFTING (30 Days (loan safe))", basePrice: 4056, profit: PROFIT_MARGIN, bigisubPlanId: 178 },
-        { id: "9mobile-250mb-7d", network: "9mobile", name: "9mobile 250MB DataTransfer (7days weekly)", basePrice: 197, profit: PROFIT_MARGIN, bigisubPlanId: 188 },
+    { id: "9mobile-250mb-7d", network: "9mobile", name: "9mobile 250MB DataTransfer (7days weekly)", basePrice: 197, profit: PROFIT_MARGIN, bigisubPlanId: 188 },
     { id: "9mobile-650mb-3d", network: "9mobile", name: "9mobile 650MB DataTransfer (3 days)", basePrice: 404, profit: PROFIT_MARGIN, bigisubPlanId: 189 },
     { id: "9mobile-2gb-30d", network: "9mobile", name: "9mobile 2GB DataTransfer (30 Days)", basePrice: 990, profit: PROFIT_MARGIN, bigisubPlanId: 190 },
     { id: "9mobile-2-3gb-30d", network: "9mobile", name: "9mobile 2.3GB DataTransfer (30 Days)", basePrice: 1190, profit: PROFIT_MARGIN, bigisubPlanId: 191 },
@@ -145,23 +151,26 @@ const localDataPlans = rawPlans.map(plan => ({
     price: plan.basePrice + plan.profit
 }));
 
-// Helper Function: Validate Nigerian Network Prefixes
+// Helper Function: Validate Nigerian Network Prefixes (includes 0704 and normalizes 234)
 function isValidNetworkPrefix(network, phone) {
-    const cleanPhone = String(phone || '').trim();
-    const mtnPrefixes = ['0803', '0806', '0703', '0706', '0813', '0814', '0816', '0903', '0906', '0913', '0916'];
-    const airtelPrefixes = ['0802', '0808', '0708', '0812', '0902', '0901', '0904', '0907', '0912'];
-    const gloPrefixes = ['0805', '0807', '0705', '0811', '0707', '0905'];
-    const mobile9Prefixes = ['0809', '0817', '0818', '0909'];
+    const digits = String(phone || '').replace(/\D/g, '');
+    const normalizedPhone = digits.startsWith('234') && digits.length >= 13
+        ? '0' + digits.slice(3)
+        : digits;
 
-    if (network === 'MTN') return mtnPrefixes.some(p => cleanPhone.startsWith(p));
-    if (network === 'Airtel') return airtelPrefixes.some(p => cleanPhone.startsWith(p));
-    if (network === 'Glo') return gloPrefixes.some(p => cleanPhone.startsWith(p));
-    if (network === '9mobile') return mobile9Prefixes.some(p => cleanPhone.startsWith(p));
+    const mtnPrefixes = ['0803', '0806', '0703', '0704', '0706', '0810', '0813', '0814', '0816', '0903', '0906', '0913', '0916'];
+    const airtelPrefixes = ['0802', '0808', '0701', '0708', '0812', '0901', '0902', '0904', '0907', '0912'];
+    const gloPrefixes = ['0805', '0807', '0705', '0811', '0815', '0707', '0905', '0915'];
+    const mobile9Prefixes = ['0809', '0817', '0818', '0908', '0909'];
+
+    if (network === 'MTN') return mtnPrefixes.some(p => normalizedPhone.startsWith(p));
+    if (network === 'Airtel') return airtelPrefixes.some(p => normalizedPhone.startsWith(p));
+    if (network === 'Glo') return gloPrefixes.some(p => normalizedPhone.startsWith(p));
+    if (network === '9mobile') return mobile9Prefixes.some(p => normalizedPhone.startsWith(p));
 
     return true;
-}
-
-// Buy Airtime via Bigisub VTU
+         }
+     // Buy Airtime via Bigisub VTU
 app.post('/api/buy-airtime', async (req, res) => {
     try {
         const userPhone = getRequestPhone(req);
@@ -374,7 +383,8 @@ app.post('/api/verify-otp', async (req, res) => {
         return res.json({ success: false, message: "Verification state error." });
     }
 });
-    // Endpoint for frontend to fetch plans (includes profit in price)
+
+// Endpoint for frontend to fetch plans (includes profit in price)
 app.get('/api/data-plans', (req, res) => {
     res.json({ success: true, plans: localDataPlans });
 });
@@ -575,6 +585,14 @@ app.post('/api/buy-data', async (req, res) => {
             }
         );
 
+        const bigisubData = bigisubRes.data || {};
+        if (bigisubData.success === false) {
+            return res.json({
+                success: false,
+                message: bigisubData.message || "Bigisub data delivery failed."
+            });
+        }
+
         const newBalance = Number((Number(user.walletBalance || 0) - plan.price).toFixed(2));
 
         await turso.execute({
@@ -582,7 +600,7 @@ app.post('/api/buy-data', async (req, res) => {
             args: [newBalance, targetPhone]
         });
 
-        const ref = (bigisubRes.data && (bigisubRes.data.reference || bigisubRes.data.transaction_id)) || 'N/A';
+        const ref = bigisubData.reference || bigisubData.transaction_id || 'N/A';
         console.log(`[BIGISUB API SUCCESS] Ref: ${ref} | Phone: ${recipientPhone} | Plan: ${plan.name}`);
 
         return res.json({
@@ -596,8 +614,49 @@ app.post('/api/buy-data', async (req, res) => {
         return res.json({ success: false, message: "Data purchase failed. Please try again." });
     }
 });
-                             // ==========================================
-// NEW AUTH FLOW: GOOGLE, RESEND OTP & LOGIN
+    // ==========================================
+// BIGISUB WEBHOOK (HMAC-SHA256 + IDEMPOTENCY)
+// ==========================================
+app.post('/api/bigisub-webhook', (req, res) => {
+    try {
+        const secret = String(process.env.BIGISUB_WEBHOOK_SECRET || '').trim();
+        const timestamp = String(req.headers['x-timestamp'] || '').trim();
+        const signature = String(req.headers['x-signature'] || '').trim();
+
+        if (secret && signature) {
+            const payloadStr = req.rawBody || JSON.stringify(req.body || {});
+            const signedPayload = timestamp ? `${timestamp}.${payloadStr}` : payloadStr;
+            const expectedHex = crypto
+                .createHmac('sha256', secret)
+                .update(signedPayload)
+                .digest('hex');
+
+            const sigBuf = Buffer.from(signature, 'utf8');
+            const expBuf = Buffer.from(expectedHex, 'utf8');
+            if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+                return res.status(401).json({ success: false, message: 'Invalid webhook signature.' });
+            }
+        }
+
+        const body = req.body || {};
+        const ref = String(body.reference || body.transaction_id || body.id || '').trim();
+        if (ref && processedWebhookRefs.has(ref)) {
+            return res.status(200).json({ success: true, duplicate: true });
+        }
+        if (ref) {
+            processedWebhookRefs.add(ref);
+        }
+
+        console.log('[BIGISUB WEBHOOK RECEIVED]', { ref: ref || 'N/A', status: body.status || 'unknown' });
+        return res.status(200).json({ success: true });
+    } catch (err) {
+        console.error('Bigisub webhook error:', err.message);
+        return res.status(500).json({ success: false, message: 'Webhook processing error.' });
+    }
+});
+
+// ==========================================
+// AUTH FLOW: GOOGLE, RESEND OTP & LOGIN
 // ==========================================
 
 // 1. Google Sign-In / Sign-Up Authorization
@@ -928,4 +987,4 @@ app.post('/api/auth/session', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
-    
+                
