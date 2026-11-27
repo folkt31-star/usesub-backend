@@ -46,6 +46,7 @@ const turso = createClient({
 });
 
 const processedWebhookRefs = new Set();
+const VIP_SPEND_THRESHOLD = 5000;
 
 (async () => {
     try {
@@ -61,9 +62,10 @@ const processedWebhookRefs = new Set();
                 verificationCode TEXT
             )
         `);
-        // Safely add new auth columns without breaking existing users or balances
+        // Safely add new auth & reward columns without breaking existing users or balances
         try { await turso.execute(`ALTER TABLE users ADD COLUMN googleId TEXT`); } catch (e) {}
         try { await turso.execute(`ALTER TABLE users ADD COLUMN emailVerified INTEGER DEFAULT 0`); } catch (e) {}
+        try { await turso.execute(`ALTER TABLE users ADD COLUMN totalSpent REAL DEFAULT 0`); } catch (e) {}
         console.log('Connected to Turso database.');
     } catch (err) {
         console.error('Error initializing Turso database:', err.message);
@@ -169,8 +171,8 @@ function isValidNetworkPrefix(network, phone) {
     if (network === '9mobile') return mobile9Prefixes.some(p => normalizedPhone.startsWith(p));
 
     return true;
-         }
-     // Buy Airtime via Bigisub VTU
+                            }
+    // Buy Airtime via Bigisub VTU
 app.post('/api/buy-airtime', async (req, res) => {
     try {
         const userPhone = getRequestPhone(req);
@@ -245,15 +247,17 @@ app.post('/api/buy-airtime', async (req, res) => {
         }
 
         const newBalance = Number((Number(row.walletBalance || 0) - numericAmount).toFixed(2));
+        const newTotalSpent = Number((Number(row.totalSpent || 0) + numericAmount).toFixed(2));
         await turso.execute({
-            sql: 'UPDATE users SET walletBalance = ? WHERE phone = ?',
-            args: [newBalance, userPhone]
+            sql: 'UPDATE users SET walletBalance = ?, totalSpent = ? WHERE phone = ?',
+            args: [newBalance, newTotalSpent, userPhone]
         });
 
         return res.json({
             success: true,
             message: `₦${numericAmount} ${networkKey} airtime sent to ${cleanRecipient}!`,
-            newBalance
+            newBalance,
+            totalSpent: newTotalSpent
         });
     } catch (err) {
         console.error('Airtime route error:', err.message, err.response?.data || '');
@@ -284,6 +288,7 @@ app.get('/api/user', async (req, res) => {
                 phone: row.phone,
                 email: row.email,
                 walletBalance: row.walletBalance,
+                totalSpent: Number(row.totalSpent || 0),
                 pin: row.pin
             }
         });
@@ -594,10 +599,11 @@ app.post('/api/buy-data', async (req, res) => {
         }
 
         const newBalance = Number((Number(user.walletBalance || 0) - plan.price).toFixed(2));
+        const newTotalSpent = Number((Number(user.totalSpent || 0) + plan.price).toFixed(2));
 
         await turso.execute({
-            sql: 'UPDATE users SET walletBalance = ? WHERE phone = ?',
-            args: [newBalance, targetPhone]
+            sql: 'UPDATE users SET walletBalance = ?, totalSpent = ? WHERE phone = ?',
+            args: [newBalance, newTotalSpent, targetPhone]
         });
 
         const ref = bigisubData.reference || bigisubData.transaction_id || 'N/A';
@@ -607,6 +613,7 @@ app.post('/api/buy-data', async (req, res) => {
             success: true,
             message: `${plan.name} sent to ${recipientPhone}!`,
             newBalance: newBalance,
+            totalSpent: newTotalSpent,
             reference: ref
         });
     } catch (error) {
@@ -614,7 +621,48 @@ app.post('/api/buy-data', async (req, res) => {
         return res.json({ success: false, message: "Data purchase failed. Please try again." });
     }
 });
-    // ==========================================
+                              // ==========================================
+// ₦5,000 SPEND VIP TELEGRAM REWARD CHECK
+// ==========================================
+app.get('/api/vip-reward', async (req, res) => {
+    const targetPhone = getRequestPhone(req);
+    if (!targetPhone) {
+        return res.json({ success: false, message: 'Please log in first.' });
+    }
+
+    try {
+        const result = await turso.execute({
+            sql: 'SELECT totalSpent FROM users WHERE phone = ?',
+            args: [targetPhone]
+        });
+        const row = result.rows[0];
+        if (!row) {
+            return res.json({ success: false, message: 'User session not found.' });
+        }
+
+        const spent = Number(row.totalSpent || 0);
+        const unlocked = spent >= VIP_SPEND_THRESHOLD;
+        const remaining = Math.max(0, Number((VIP_SPEND_THRESHOLD - spent).toFixed(2)));
+        const inviteLink = String(process.env.TELEGRAM_VIP_LINK || '').trim();
+
+        return res.json({
+            success: true,
+            unlocked,
+            totalSpent: spent,
+            threshold: VIP_SPEND_THRESHOLD,
+            remaining,
+            inviteLink: unlocked ? inviteLink : null,
+            message: unlocked
+                ? 'VIP Telegram reward unlocked!'
+                : `Spend ₦${remaining.toLocaleString()} more to unlock the VIP Telegram channel.`
+        });
+    } catch (err) {
+        console.error('VIP reward check error:', err.message);
+        return res.json({ success: false, message: 'Could not verify VIP reward status.' });
+    }
+});
+
+// ==========================================
 // BIGISUB WEBHOOK (HMAC-SHA256 + IDEMPOTENCY)
 // ==========================================
 app.post('/api/bigisub-webhook', (req, res) => {
@@ -975,7 +1023,8 @@ app.post('/api/auth/session', async (req, res) => {
                 name: user.name,
                 email: user.email,
                 phone: user.phone || null,
-                walletBalance: Number(user.walletBalance || 0)
+                walletBalance: Number(user.walletBalance || 0),
+                totalSpent: Number(user.totalSpent || 0)
             }
         });
     } catch (err) {
